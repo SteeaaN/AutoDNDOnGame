@@ -3,7 +3,7 @@
  * @description Automatically set your status to Do Not Disturb when you launch a game
  * @version 1.1.0
  * @author Xenon Colt
- * @authorLink https://xenoncolt.me
+ * @authorLink https://xenoncolt.live
  * @website https://github.com/xenoncolt/AutoDNDOnGame
  * @source https://raw.githubusercontent.com/xenoncolt/AutoDNDOnGame/main/AutoDNDOnGame.plugin.js
  * @invite vJRe78YmN8
@@ -11,15 +11,14 @@
 
 const config = {
     main: "AutoDNDOnGame.plugin.js",
-    authorId: "709210314230726776",
-    website: "https://xenoncolt.me",
     info: {
         name: "AutoDNDOnGame",
         authors: [
             {
                 name: "Xenon Colt",
+                authorId: "709210314230726776",
                 github_username: "xenoncolt",
-                link: "https://xenoncolt.me"
+                link: "https://xenoncolt.live"
             }
         ],
         version: "1.1.0",
@@ -131,11 +130,7 @@ const { Webpack, UI, Logger, Data, Utils } = BdApi;
 class AutoDNDOnGame {
     constructor() {
         this._config = config;
-        
-        //Save settings or load defaults
         this.settings = Data.load(this._config.info.name, "settings");
-        // settings = this.settings; // ahhhh my brain is not braining 
-        // this.getSettingsPanel();
 
         this.hasSetStatus = false;
         this.revertTimeoutId = null;
@@ -171,10 +166,7 @@ class AutoDNDOnGame {
 
     start() {
         this.settings = Data.load(this._config.info.name, "settings") || defaultSettings;
-        // this.settings = Data.load(this._config.info.name, "settings") ? Data.load(this._config.info.name, "settings") : defaultSettings;
-        // settings = this.settings;  // synconize with global
 
-        // Retrieve the presence store from BdApi.Webpack
         this.presenceStore = Webpack.getStore("PresenceStore");
         this.CurrentUserStore = Webpack.getStore("UserStore");
         this.UserSettingsProtoStore = Webpack.getStore("UserSettingsProtoStore");
@@ -195,12 +187,9 @@ class AutoDNDOnGame {
         }
 
         this.presenceStore.addChangeListener(this.boundHandlePresenceChange);
-        // this.pollingInterval = setInterval(() => this.handlePresenceChange(), this.settings.pollingInterval);
 
-        // this.saveAndUpdate(); nah.. i prefer logic :3
         if (Data.load(this._config.info.name, "settings") == null) this.saveAndUpdate();
 
-        // Counting status change 
         this.statusChangeResetInterval = setInterval(() => {
             this.statusChangeCount = 0;
             Logger.info(this._config.info.name, "Status change count reset");
@@ -232,15 +221,10 @@ class AutoDNDOnGame {
             }
         }
 
-        // No fking idea why that was not worked but its working fineeee.. wtf.. it should be working fine on both methods..
-        // nvm.. i don't wanna waste my brain anymore.. [if it works dont touch it] :3
-
         return UI.buildSettingsPanel({
             settings: this._config.settingsPanel,
             onChange: (category, id, value) => {
-                this.settings[id] = value; // this is for instance
-                // settings[id] = value;  // this is for global
-                // Data.save(this._config.id, "settings", settings);
+                this.settings[id] = value; 
                 this.saveAndUpdate();
             },
         });
@@ -255,8 +239,7 @@ class AutoDNDOnGame {
         const currentUser = this.CurrentUserStore.getCurrentUser();
         if (!currentUser) return;
         const activities = this.presenceStore.getActivities(currentUser.id);
-        // Debug log 
-        // console.log("Presence changed. Activities:", activities);
+
         // Look for an activity of type 0 ("Playing") with a non-empty name.
         const isPlayingGame =
             Array.isArray(activities) &&
