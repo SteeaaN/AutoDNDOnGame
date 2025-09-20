@@ -1,7 +1,7 @@
 /**
  * @name AutoDNDOnGame
  * @description Automatically set your status to Do Not Disturb when you launch a game
- * @version 1.1.0
+ * @version 1.2.0
  * @author Xenon Colt
  * @authorLink https://xenoncolt.live
  * @website https://github.com/xenoncolt/AutoDNDOnGame
@@ -21,7 +21,7 @@ const config = {
                 link: "https://xenoncolt.live"
             }
         ],
-        version: "1.1.0",
+        version: "1.2.0",
         description: "Automatically set your status to Do Not Disturb when you launch a game",
         github: "https://github.com/xenoncolt/AutoDNDOnGame",
         invite: "vJRe78YmN8",
@@ -33,22 +33,9 @@ const config = {
             title: "New Features & Improvements",
             type: "added",
             items: [
-                "Added a new setting where you can set your status to online when Discord starts",
-            ]
-        },
-        {
-            title: "Fixed Few Things",
-            type: "fixed",
-            items: [
-                "Fixed `Change status to :` UI problem",
-                "Fixed problem when discord force closes where it doesn't set your status back to online",
-            ]
-        },
-        {
-            title: "Changed Few Things",
-            type: "changed",
-            items: [
-                "Changed settings UI",
+                "Game list management: whitelist or blacklist games individually",
+                "Recent games list integrated into settings with toggle switches",
+                "Some improvements"
             ]
         }
     ],
@@ -60,21 +47,9 @@ const config = {
             id: "inGameStatus",
             value: "dnd",
             options: [
-                {
-                    name: "Do Not Disturb",
-                    value: "dnd",
-                    color: "#6C0F0F"
-                },
-                {
-                    name: "Invisible",
-                    value: "invisible",
-                    color: "#242222"
-                },
-                {
-                    name: "Idle",
-                    value: "idle",
-                    color: "#BB9C00"
-                }
+                { name: "Do Not Disturb", value: "dnd", color: "#6C0F0F" },
+                { name: "Invisible", value: "invisible", color: "#242222" },
+                { name: "Idle", value: "idle", color: "#BB9C00" }
             ]
         },
         {
@@ -86,17 +61,7 @@ const config = {
             max: 120,
             units: "s",
             value: 10,
-            markers: [
-                5,
-                15,
-                30,
-                45,
-                60,
-                75,
-                90,
-                105,
-                120
-            ]
+            markers: [5, 15, 30, 45, 60, 75, 90, 105, 120]
         },
         {
             type: "switch",
@@ -111,26 +76,37 @@ const config = {
             name: "Set Online on Startup",
             note: "Change your status to online when Discord starts if you're not already online",
             value: false,
-        }
+        },
+        {
+            type: "radio",
+            id: "gameListMode",
+            name: "Game List Mode",
+            note: "Choose whether the selected games should be included (whitelist) or excluded (blacklist)",
+            value: "whitelist",
+            options: [
+                { name: "Only selected games (whitelist)", value: "whitelist" },
+                { name: "Exclude selected games (blacklist)", value: "blacklist" }
+            ]
+        },
+        { type: "header", id: "hdr_games", name: "Games" }
     ]
 };
-
-// let settings = {};
 
 let defaultSettings = {
     inGameStatus: "dnd",
     revertDelay: 10,
     showToasts: true,
-    startupOnline: false
-}
+    startupOnline: false,
+    targetGames: [],          // Array of games with {id, name, enabled}
+    gameListMode: "whitelist" // whitelist = only these games, blacklist = exclude these games
+};
 
-const { Webpack, UI, Logger, Data, Utils } = BdApi;
-
+const { Webpack, UI, Logger, Data } = BdApi;
 
 class AutoDNDOnGame {
     constructor() {
         this._config = config;
-        this.settings = Data.load(this._config.info.name, "settings");
+        this.settings = Object.assign({}, defaultSettings, Data.load(this._config.info.name, "settings"));
 
         this.hasSetStatus = false;
         this.revertTimeoutId = null;
@@ -138,17 +114,13 @@ class AutoDNDOnGame {
         this.statusChangeThreshold = 5;
         this.statusChangeResetInterval = null;
         this.boundHandlePresenceChange = this.handlePresenceChange.bind(this);
+        this.boundHandleGamesStoreChange = this.handleGamesStoreChange.bind(this);
+        this.recentGames = [];
+
         try {
-            let currentVersionInfo = {};
-            try {
-                currentVersionInfo = Object.assign({}, { version: this._config.info.version, hasShownChangelog: false }, Data.load("AutoDNDOnGame", "currentVersionInfo"));
-            } catch (err) {
-                currentVersionInfo = { version: this._config.info.version, hasShownChangelog: false };
-            }
+            let currentVersionInfo = Object.assign({}, { version: this._config.info.version, hasShownChangelog: false }, Data.load(this._config.info.name, "currentVersionInfo"));
             if (this._config.info.version != currentVersionInfo.version) currentVersionInfo.hasShownChangelog = false;
             currentVersionInfo.version = this._config.info.version;
-            Data.save(this._config.info.name, "currentVersionInfo", currentVersionInfo);
-
             if (!currentVersionInfo.hasShownChangelog) {
                 UI.showChangelogModal({
                     title: "AutoDNDOnGame Changelog",
@@ -156,39 +128,61 @@ class AutoDNDOnGame {
                     changes: this._config.changelog
                 });
                 currentVersionInfo.hasShownChangelog = true;
-                Data.save(this._config.info.name, "currentVersionInfo", currentVersionInfo);
             }
-        }
-        catch (err) {
+            Data.save(this._config.info.name, "currentVersionInfo", currentVersionInfo);
+        } catch (err) {
             Logger.error(this._config.info.name, err);
         }
     }
 
-    start() {
-        this.settings = Data.load(this._config.info.name, "settings") || defaultSettings;
+    // Helper
+    isSameGame(a, b) {
+        const getId = g => typeof g === "string" && g.startsWith("id:") ? g.slice(3) : g.id;
+        const getName = g => typeof g === "string" && g.startsWith("name:") ? g.slice(5) : g.name;
 
-        this.presenceStore = Webpack.getStore("PresenceStore");
-        this.CurrentUserStore = Webpack.getStore("UserStore");
-        this.UserSettingsProtoStore = Webpack.getStore("UserSettingsProtoStore");
-        if (!this.presenceStore) {
-            UI.showToast("PresenceStore not found. The plugin cannot function properly.", { type: "error" });
+        const idA = getId(a);
+        const idB = getId(b);
+        if (idA && idB && idA === idB) return true;
+
+        const nameA = getName(a)?.toLowerCase();
+        const nameB = getName(b)?.toLowerCase();
+        if (nameA && nameB && nameA === nameB) return true;
+
+        return false;
+    }
+
+    start() {
+        this.settings = Object.assign({}, defaultSettings, Data.load(this._config.info.name, "settings") || {});
+
+        this.presenceStore = Webpack.getStore?.("PresenceStore");
+        this.CurrentUserStore = Webpack.getStore?.("UserStore");
+        this.UserSettingsProtoStore = Webpack.getStore?.("UserSettingsProtoStore");
+
+        // RegisteredGamesStore is used only for populating recent games in settings
+        this.RegisteredGamesStore = Webpack.getModule(m => m?.getGamesSeen && m?.getSeenGameByName) || Webpack.getModule(m => m?.getGamesSeen) || Webpack.getModule(m => m?.getRegisteredGames) || null;
+
+        try {
+            this.recentGames = this.RegisteredGamesStore?.getGamesSeen?.() ?? this.RegisteredGamesStore?.getRegisteredGames?.() ?? [];
+            if (this.RegisteredGamesStore?.addChangeListener) {
+                this.RegisteredGamesStore.addChangeListener(this.boundHandleGamesStoreChange);
+            }
+        } catch (e) {
+            Logger.warn(this._config.info.name, "Cannot access RegisteredGamesStore safely:", e);
+            this.recentGames = [];
+        }
+
+        if (!this.presenceStore || !this.CurrentUserStore || !this.UserSettingsProtoStore) {
+            UI.showToast("Presence/User stores not found. Plugin may not work.", { type: "error" });
             return;
         }
 
-        if (this.settings.startupOnline) {
-            const currentStatus = this.currentStatus();
-            if (currentStatus !== 'online') {
-                this.updateStatus("online");
-                if (this.settings.showToasts) {
-                    UI.showToast("Status changed to online on startup", { type: "success" });
-                }
-                Logger.info(this._config.info.name, "Changed status to online on startup");
-            }
+        if (this.settings.startupOnline && this.currentStatus() !== "online") {
+            this.updateStatus("online");
+            if (this.settings.showToasts) UI.showToast("Status changed to online on startup", { type: "success" });
+            Logger.info(this._config.info.name, "Changed status to online on startup");
         }
 
         this.presenceStore.addChangeListener(this.boundHandlePresenceChange);
-
-        if (Data.load(this._config.info.name, "settings") == null) this.saveAndUpdate();
 
         this.statusChangeResetInterval = setInterval(() => {
             this.statusChangeCount = 0;
@@ -197,8 +191,9 @@ class AutoDNDOnGame {
     }
 
     stop() {
-        if (this.presenceStore) {
-            this.presenceStore.removeChangeListener(this.boundHandlePresenceChange);
+        if (this.presenceStore) this.presenceStore.removeChangeListener(this.boundHandlePresenceChange);
+        if (this.RegisteredGamesStore?.removeChangeListener) {
+            try { this.RegisteredGamesStore.removeChangeListener(this.boundHandleGamesStoreChange); } catch (e) {}
         }
         if (this.revertTimeoutId) {
             clearTimeout(this.revertTimeoutId);
@@ -214,19 +209,66 @@ class AutoDNDOnGame {
         }
     }
 
+    handleGamesStoreChange() {
+        this.recentGames = this.RegisteredGamesStore?.getGamesSeen?.() ?? this.RegisteredGamesStore?.getRegisteredGames?.() ?? [];
+    }
+
     getSettingsPanel() {
-        for (const setting of this._config.settingsPanel) {
-            if (this.settings[setting.id] !== undefined) {
-                setting.value = this.settings[setting.id];
+        this.settings = Object.assign({}, defaultSettings, Data.load(this._config.info.name, "settings") || {});
+
+        for (const s of this._config.settingsPanel) {
+            if (this.settings[s.id] !== undefined) s.value = this.settings[s.id];
+        }
+
+        const gamesList = (this.RegisteredGamesStore?.getGamesSeen?.() ?? this.recentGames ?? []).filter(Boolean);
+
+        // Merge recent games with saved target games
+        const combinedGames = [];
+        for (const g of gamesList) {
+            const gid = g.id ?? g.application_id ?? g.applicationId ?? null;
+            const gname = g.name ?? g.title ?? String(g);
+            combinedGames.push({ id: gid ? String(gid) : null, name: gname });
+        }
+        for (const tg of this.settings.targetGames) {
+            if (!combinedGames.some(c => this.isSameGame(c, tg))) {
+                combinedGames.push(tg);
             }
         }
 
+        const gameSwitches = combinedGames.map((game, idx) => {
+            const existing = this.settings.targetGames.find(tg => this.isSameGame(tg, game));
+            const isEnabled = existing ? existing.enabled !== false : false;
+            return {
+                type: "switch",
+                id: `game_${idx}`,
+                name: game.name || `AppID: ${game.id}`,
+                value: isEnabled
+            };
+        });
+
         return UI.buildSettingsPanel({
-            settings: this._config.settingsPanel,
+            settings: [
+                ...this._config.settingsPanel,
+                ...gameSwitches
+            ],
             onChange: (category, id, value) => {
-                this.settings[id] = value; 
+                if (id.startsWith("game_")) {
+                    const index = parseInt(id.split("_")[1], 10);
+                    const game = combinedGames[index];
+
+                    let existing = this.settings.targetGames.find(tg => this.isSameGame(tg, game));
+                    if (value) {
+                        if (existing) existing.enabled = true;
+                        else this.settings.targetGames.push({ ...game, enabled: true });
+                    } else if (existing) {
+                        existing.enabled = false;
+                    }
+                    this.saveAndUpdate();
+                    return;
+                }
+                this.settings[id] = value;
                 this.saveAndUpdate();
-            },
+            }
         });
     }
 
@@ -238,41 +280,56 @@ class AutoDNDOnGame {
     handlePresenceChange() {
         const currentUser = this.CurrentUserStore.getCurrentUser();
         if (!currentUser) return;
-        const activities = this.presenceStore.getActivities(currentUser.id);
+        const activities = this.presenceStore.getActivities(currentUser.id) || [];
 
-        // Look for an activity of type 0 ("Playing") with a non-empty name.
-        const isPlayingGame =
-            Array.isArray(activities) &&
-            activities.some(activity => activity.type === 0 && activity.name);
-        if (isPlayingGame) {
-            if (!this.hasSetStatus) {
-                if (this.currentStatus() !== this.settings.inGameStatus) {
-                    this.updateStatus(this.settings.inGameStatus);
-                    this.hasSetStatus = true;
-                    this.statusChangeCount++;
-                    if (this.settings.showToasts) UI.showToast(`Game detected. Changing status to ${this.settings.inGameStatus}`, { type: "danger" });
-                    if (this.revertTimeoutId) {
-                        clearTimeout(this.revertTimeoutId);
-                        this.revertTimeoutId = null;
-                    }
-                } else {
-                    Logger.info(this._config.info.name, "Status change limit reached. Skipping status change");
-                }
+        const gameActivities = activities.filter(act => act?.type === 0 && (act.name || act.application_id || act.applicationId));
+
+        const mode = this.settings.gameListMode || "whitelist";
+        let shouldTrigger = false;
+
+        for (const act of gameActivities) {
+            const appId = act.application_id ?? act.applicationId ?? act.id ?? null;
+            const gname = act.name ? String(act.name).trim() : "";
+            if (!gname && !appId) continue;
+
+            const newEntry = {};
+            if (appId) newEntry.id = String(appId);
+            if (gname) newEntry.name = gname;
+
+            // If game not yet known, add to list as disabled by default
+            let alreadyKnown = this.settings.targetGames.some(g => this.isSameGame(g, newEntry));
+            if (!alreadyKnown) {
+                this.settings.targetGames.push({ ...newEntry, enabled: false });
+                this.saveAndUpdate();
+            }
+
+            // Check against enabled games
+            let exists = this.settings.targetGames.some(g => g.enabled !== false && this.isSameGame(g, newEntry));
+            if ((mode === "whitelist" && exists) || (mode === "blacklist" && !exists)) {
+                shouldTrigger = true;
+                break;
+            }
+        }
+
+        if (shouldTrigger) {
+            if (!this.hasSetStatus && this.currentStatus() !== this.settings.inGameStatus) {
+                this.updateStatus(this.settings.inGameStatus);
+                this.hasSetStatus = true;
+                if (this.settings.showToasts) UI.showToast(`Game detected → status ${this.settings.inGameStatus}`, { type: "danger" });
+            }
+            if (this.revertTimeoutId) {
+                clearTimeout(this.revertTimeoutId);
+                this.revertTimeoutId = null;
             }
         } else {
+            // Games running but not in target list → revert online
             if (this.hasSetStatus) {
                 if (this.revertTimeoutId) clearTimeout(this.revertTimeoutId);
                 this.revertTimeoutId = setTimeout(() => {
-                    const updatedActivities = this.presenceStore.getActivities(currentUser.id);
-                    const stillPlaying =
-                        Array.isArray(updatedActivities) &&
-                        updatedActivities.some(activity => activity.type === 0 && activity.name);
-                    if (!stillPlaying) {
-                        this.updateStatus("online");
-                        this.hasSetStatus = false;
-                        if (this.settings.showToasts) UI.showToast("No game detected. Reverting status to online.", { type: "success" });
-                    }
-                }, this.settings.revertDelay * 1000);
+                    this.updateStatus("online");
+                    this.hasSetStatus = false;
+                    if (this.settings.showToasts) UI.showToast("No target games detected → reverting status to online.", { type: "success" });
+                }, (this.settings.revertDelay || 10) * 1000);
             }
         }
     }
