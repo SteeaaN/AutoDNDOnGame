@@ -159,10 +159,9 @@ class AutoDNDOnGame {
         this.UserSettingsProtoStore = Webpack.getStore?.("UserSettingsProtoStore");
 
         // RegisteredGamesStore is used only for populating recent games in settings
-        this.RegisteredGamesStore = Webpack.getModule(m => m?.getGamesSeen && m?.getSeenGameByName) || Webpack.getModule(m => m?.getGamesSeen) || Webpack.getModule(m => m?.getRegisteredGames) || null;
-
+        this.RegisteredGamesStore = Webpack.getModule(m => m?.getGamesSeen)|| null;
         try {
-            this.recentGames = this.RegisteredGamesStore?.getGamesSeen?.() ?? this.RegisteredGamesStore?.getRegisteredGames?.() ?? [];
+            this.recentGames = this.RegisteredGamesStore?.getGamesSeen?.() ?? [];
             if (this.RegisteredGamesStore?.addChangeListener) {
                 this.RegisteredGamesStore.addChangeListener(this.boundHandleGamesStoreChange);
             }
@@ -210,7 +209,7 @@ class AutoDNDOnGame {
     }
 
     handleGamesStoreChange() {
-        this.recentGames = this.RegisteredGamesStore?.getGamesSeen?.() ?? this.RegisteredGamesStore?.getRegisteredGames?.() ?? [];
+        this.recentGames = this.RegisteredGamesStore?.getGamesSeen?.() ?? [];
     }
 
     getSettingsPanel() {
